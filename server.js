@@ -2,13 +2,13 @@
 let express = require('express');
 let app = express();
 
-// var cors = require('cors');
-// app.use(cors(
-// {
-// 	origin: /p5js\.org$/,
-// 	optionsSuccessStatus: 200 
-// }
-// ));
+var cors = require('cors');
+app.use(cors(
+{
+	origin: /p5js\.org$/,
+	optionsSuccessStatus: 200 
+}
+));
 
 // let server = app.listen(3000);
 app.use(express.static('public'));
@@ -16,7 +16,7 @@ app.use(express.static('public'));
 let http = require('http');
 
 let httpServer = http.createServer(app);
-
+https://github.com/yousufuma/younme/blob/main/server.js
 let port = process.env.port || 3000;
 
 httpServer.listen(port, ()=>{
