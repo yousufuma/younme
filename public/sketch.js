@@ -21,7 +21,7 @@ function setup() {
   textureMode(IMAGE);
   textureWrap(CLAMP);
 
-  socket = io.connect('http://localhost:3000')
+//   socket = io.connect('http://localhost:3000')
 
   let constraints = { audio: true, video: true };
   myvideo = createCapture(constraints, function (stream) {
