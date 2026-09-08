@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <script>
+      const params = new URLSearchParams(window.location.search);
+      window.__YOUNME_PREVIEW__ = {
+        participants: params.get("participants") || 1,
+        network: params.get("network") === "1",
+        seed: params.get("seed") || 0,
+      };
+    </script>
+    <script src="/simplepeer.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/p5.js"></script>
+    <script src="/p5livemedia.js"></script>
+    <link rel="stylesheet" type="text/css" href="/style.css" />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>You and Me — Development Preview</title>
+  </head>
+  <body>
+    <script src="/sketch.js"></script>
+  </body>
+</html>
