@@ -53,6 +53,10 @@ io.on("connection", (socket) => {
   });
 });
 
-httpServer.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
-});
+if (!process.env.VERCEL) {
+  httpServer.listen(port, () => {
+    console.log(`Server listening on port ${port}`);
+  });
+}
+
+module.exports = httpServer;
