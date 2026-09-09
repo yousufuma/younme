@@ -71,12 +71,15 @@
 */
 class p5LiveMedia {
 
-    constructor(sketch, type, elem, room, host) {
+    constructor(sketch, type, elem, room, host, rtcConfig) {
 
         this.sketch = sketch;
         //sketch.disableFriendlyErrors = true;
 
         this.simplepeers = [];
+        this.rtcConfig = rtcConfig || { iceServers: [] };
+        this.retryCounts = new Map();
+        this.retryTimers = new Map();
         this.mystream;
         this.onStreamCallback;
         this.onDataCallback;
@@ -100,6 +103,8 @@ class p5LiveMedia {
         }
 
         this.socket.on('connect', () => {
+            window.younmeConnection.signaling = 'connected';
+            recordConnectionEvent('signaling-connected');
             //console.log("Socket Connected");
             //console.log("My socket id: ", this.socket.id);
 
@@ -114,23 +119,25 @@ class p5LiveMedia {
         });
 
         this.socket.on('disconnect', (data) => {
-           // console.log("Socket disconnected");
+            window.younmeConnection.signaling = 'disconnected';
+            recordConnectionEvent('signaling-disconnected');
+            for (const timer of this.retryTimers.values()) clearTimeout(timer);
+            this.retryTimers.clear();
+            this.retryCounts.clear();
+            for (const peer of [...this.simplepeers]) this.removePeer(peer.socket_id);
+        });
+
+        this.socket.on('connect_error', () => {
+            window.younmeConnection.signaling = 'error';
+            recordConnectionEvent('signaling-error');
         });
 
         this.socket.on('peer_disconnect', (data) => {
-            //console.log("simplepeer has disconnected " + data);
-            this.callOnDisconnectCallback(data);
-            for (let i = 0; i < this.simplepeers.length; i++) {
-                if (this.simplepeers[i].socket_id == data) {
-                    this.simplepeers[i].destroy();
-                    //console.log("Removed the DOM Element if it exits");
-                    this.removeDomElement(this.simplepeers[i]);
-                    //console.log("Removing simplepeer: " + i);
-                    this.simplepeers.splice(i,1);
-                    break;
-                } 
-            }	
-        });			
+            clearTimeout(this.retryTimers.get(data));
+            this.retryTimers.delete(data);
+            this.retryCounts.delete(data);
+            this.removePeer(data);
+        });
 
         // Receive listresults from server
         this.socket.on('listresults', (data) => {
@@ -177,6 +184,11 @@ class p5LiveMedia {
             
             }	
             if (!found) {
+                // Late trickle candidates from a closed session must not create
+                // a new peer with no offer; wait for the next real offer.
+                if (!data || data.type !== 'offer') return;
+                clearTimeout(this.retryTimers.get(from));
+                this.retryTimers.delete(from);
                 //console.log("Never found right simplepeer object");
                 // Let's create it then, we won't be the "initiator"
                 let simplepeer = new SimplePeerWrapper(this,
@@ -190,6 +202,33 @@ class p5LiveMedia {
                 simplepeer.inputsignal(data);
             }
         });
+    }
+
+    removePeer(id) {
+        const peer = this.simplepeers.find(item => item.socket_id === id);
+        if (!peer) return;
+        this.simplepeers = this.simplepeers.filter(item => item !== peer);
+        peer.disposed = true;
+        this.callOnDisconnectCallback(id);
+        peer.destroy();
+        this.removeDomElement(peer);
+        delete window.younmeConnection.peers[id];
+    }
+
+    retryPeer(peer) {
+        if (peer.disposed) return;
+        const id = peer.socket_id;
+        const shouldRetry = peer.initiator && this.socket.connected;
+        this.removePeer(id);
+        const attempts = this.retryCounts.get(id) || 0;
+        if (!shouldRetry || attempts >= 3) return;
+        this.retryCounts.set(id, attempts + 1);
+        this.retryTimers.set(id, setTimeout(() => {
+            this.retryTimers.delete(id);
+            if (!this.socket.connected || this.simplepeers.some(item => item.socket_id === id)) return;
+            recordConnectionEvent('peer-retry', { peer: id, attempt: attempts + 1 });
+            this.simplepeers.push(new SimplePeerWrapper(this, true, id, this.socket, this.mystream));
+        }, 3000 * (attempts + 1)));
     }
 
     // // use this to add a track to a stream - assuming this is a stream, it will have to extract the track out
@@ -262,7 +301,7 @@ class p5LiveMedia {
             videoEl.loadedmetadata = false;
             // set width and height onload metadata
             domElement.addEventListener('loadedmetadata', function() {
-              domElement.play();
+              domElement.play().catch(() => {});
               if (domElement.width) {
                 videoEl.width = domElement.width;
                 videoEl.height = domElement.height;
@@ -286,15 +325,13 @@ class p5LiveMedia {
 class SimplePeerWrapper {
 
     constructor(p5lm, initiator, socket_id, socket, stream) {
+        this.initiator = initiator;
+        this.disposed = false;
         this.simplepeer = new SimplePeer({
             initiator: initiator,
             trickle: true,
-            config: {
-                iceServers: [
-                    { urls: "stun:stun.l.google.com:19302" },
-                    { urls: "stun:stun1.l.google.com:19302" }
-                ]
-            }
+            stream: stream || undefined,
+            config: p5lm.rtcConfig
         });
 
         this.p5livemedia = p5lm;
@@ -313,6 +350,19 @@ class SimplePeerWrapper {
 
         // Dom Element
         this.domElement = null;
+        window.younmeConnection.peers[socket_id] = { state: 'connecting', route: 'unknown', video: false };
+        this.connectionTimeout = setTimeout(() => {
+            if (!this.connected && !this.disposed) {
+                recordConnectionEvent('peer-timeout', { peer: socket_id });
+                this.simplepeer.destroy();
+            }
+        }, 35000);
+
+        this.simplepeer.on('iceStateChange', state => {
+            const status = window.younmeConnection.peers[socket_id];
+            if (status) status.state = state;
+            recordConnectionEvent('ice-state', { peer: socket_id, state });
+        });
 
         // simplepeer generates signals which need to be sent across socket
         this.simplepeer.on('signal', data => {						
@@ -327,12 +377,21 @@ class SimplePeerWrapper {
 
             // We are connected
             this.connected = true;
-
-            // Let's give them our stream, if we have a stream that is
-            if (stream != null) {
-                this.simplepeer.addStream(stream);
-                //console.log("Send our stream");
-            }
+            clearTimeout(this.connectionTimeout);
+            recordConnectionEvent('peer-connected', { peer: socket_id });
+            // Check the selected candidate pair: having TURN configured alone
+            // does not prove the media actually used a relay.
+            this.simplepeer.getStats((error, reports) => {
+                if (error || this.disposed) return;
+                const transport = reports.find(report => report.type === 'transport' && report.selectedCandidatePairId);
+                const pair = reports.find(report => report.type === 'candidate-pair' &&
+                    (transport ? report.id === transport.selectedCandidatePairId : report.nominated && report.state === 'succeeded'));
+                if (!pair) return;
+                const candidates = reports.filter(report => report.id === pair.localCandidateId || report.id === pair.remoteCandidateId);
+                const route = candidates.some(candidate => candidate.candidateType === 'relay') ? 'relay' : 'direct';
+                window.younmeConnection.peers[socket_id].route = route;
+                recordConnectionEvent('media-route', { peer: socket_id, route });
+            });
         });
 
         // Stream coming in to us
@@ -345,10 +404,14 @@ class SimplePeerWrapper {
             this.domElement = document.createElement("VIDEO");
             this.domElement.id = this.socket_id;
             this.domElement.srcObject = stream;
-            this.domElement.muted = false;
+            this.domElement.muted = true;
+            this.domElement.autoplay = true;
+            this.domElement.setAttribute('playsinline', '');
             this.domElement.onloadedmetadata = function(e) {
-                e.target.play();
-            };					
+                e.target.play().catch(() => {});
+            };
+            window.younmeConnection.peers[socket_id].video = true;
+            recordConnectionEvent('remote-stream', { peer: socket_id });
             //document.body.appendChild(ovideo);
             //console.log(this.domElement);
 
@@ -373,11 +436,13 @@ class SimplePeerWrapper {
             // ERR_DATA_CHANNEL
             // ERR_CONNECTION_FAILURE
             this.connected = false;
-            console.log(err);
+            recordConnectionEvent('peer-error', { peer: socket_id, code: err.code || 'WEBRTC_ERROR' });
         });
 
         this.simplepeer.on('close', () => {
             this.connected = false;
+            clearTimeout(this.connectionTimeout);
+            this.p5livemedia.retryPeer(this);
         });
     }
 
@@ -395,6 +460,8 @@ class SimplePeerWrapper {
 
     destroy() {
         this.connected = false;
+        this.disposed = true;
+        clearTimeout(this.connectionTimeout);
 
         if (this.domElement && this.domElement.srcObject) {
             this.domElement.srcObject.getTracks().forEach(track => track.stop());

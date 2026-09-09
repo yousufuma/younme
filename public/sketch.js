@@ -201,6 +201,10 @@ function draw() {
     previewNetworkState.receivedSignals
   );
   canvas.elt.dataset.webglContext = webglContextState;
+  canvas.elt.dataset.relay = window.younmeConnection.relay;
+  canvas.elt.dataset.relayPeers = String(
+    Object.values(window.younmeConnection.peers).filter(peer => peer.route === "relay").length
+  );
   canvas.elt.setAttribute(
     "aria-label",
     `Shared webcam sculpture: ${participants.length} participants, ${Object.keys(remoteVideos).length} remote videos, ${liveMedia ? liveMedia.simplepeers.filter((peer) => peer.connected).length : 0} connected peers, socket ${liveMedia && liveMedia.socket && liveMedia.socket.connected ? "connected" : "disconnected"}, render ${webglContextState}`
@@ -330,7 +334,8 @@ function createPreviewParticipants(count, seed) {
   return participants;
 }
 
-function connectLiveMedia(stream, room) {
+async function connectLiveMedia(stream, room) {
+  const rtcConfig = await loadRtcConfig();
   const signalingHost = previewNetworkEnabled && !previewUsesPublicSignaling
     ? window.location.origin
     : undefined;
@@ -340,7 +345,8 @@ function connectLiveMedia(stream, room) {
     "CAPTURE",
     stream,
     room,
-    signalingHost
+    signalingHost,
+    rtcConfig
   );
   liveMedia.on("stream", gotStream);
   liveMedia.on("data", gotData);
