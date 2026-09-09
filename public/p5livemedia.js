@@ -311,22 +311,24 @@ class p5LiveMedia {
             domElement.style.height = '2px';
             domElement.style.opacity = '0.01';
             domElement.style.pointerEvents = 'none';
-            domElement.style.zIndex = '-1';
+            // Keep it in the composited page. A negative stacking level can
+            // make mobile browsers treat the element as fully occluded and
+            // suspend frame production even though the WebRTC track is live.
+            domElement.style.zIndex = '0';
             document.body.appendChild(domElement);
             let videoEl = new p5.MediaElement(domElement, this.sketch);
             this.sketch._elements.push(videoEl);
 
-            videoEl.loadedmetadata = false;
-            // A metadata event does not guarantee a decodable frame on iOS.
-            // Only make the stream eligible for p5 texture drawing once the
-            // video has dimensions and current frame data.
+            // The stream event itself is the eligibility signal. Do not gate
+            // the sculpture on a later metadata/frame event: those events can
+            // be missed when a remote video starts before handlers are added.
+            videoEl.loadedmetadata = true;
             const markFrameAvailable = function() {
               domElement.play().catch(() => {});
               if (domElement.videoWidth > 0 && domElement.videoHeight > 0) {
                 videoEl.width = videoEl.elt.width = domElement.videoWidth;
                 videoEl.height = videoEl.elt.height = domElement.videoHeight;
                 if (domElement.readyState >= 2) {
-                  videoEl.loadedmetadata = true;
                   videoEl._younmeFrameReady = true;
                 }
               }

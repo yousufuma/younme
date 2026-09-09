@@ -106,7 +106,7 @@ test("unreachable peer retries are bounded", () => {
   assert.equal(media.retryCounts.get("remote"), 3);
 });
 
-test("remote video stays in the DOM and becomes drawable only with frame data", () => {
+test("remote video stays composited and is drawable as soon as its stream arrives", () => {
   const { media, socket, sketch } = fixture();
   media.on("stream", () => {});
   socket.emit("listresults", ["remote"]);
@@ -118,9 +118,11 @@ test("remote video stays in the DOM and becomes drawable only with frame data", 
   assert.equal(video.style.position, "fixed");
   assert.equal(video.style.opacity, "0.01");
   assert.equal(video.style.display, undefined);
+  assert.equal(video.style.zIndex, "0");
   assert.equal(video.muted, true);
   assert.equal(video.playsInline, true);
-  assert.equal(wrapped.loadedmetadata, false);
+  assert.equal(wrapped.loadedmetadata, true);
+  assert.equal(video.srcObject.id, "remote-stream");
 
   video.videoWidth = 640;
   video.videoHeight = 480;

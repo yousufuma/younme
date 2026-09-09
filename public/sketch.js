@@ -505,6 +505,10 @@ function windowResized() {
 function gotStream(stream, id) {
   const videoElement = stream.elt;
   stream._younmeRemote = true;
+  // Receiving a MediaStream is enough to reserve and render this person's
+  // material rings. Frame readiness is diagnostic only because mobile Safari
+  // may not emit its initial media events again after this callback is wired.
+  stream.loadedmetadata = true;
   const markVideoReady = () => {
     const hasFrame =
       videoElement.readyState >= 2 &&
@@ -551,13 +555,7 @@ function videoIsReady(video) {
 
   const videoElement = video.elt || video;
   if (video._younmeRemote) {
-    return Boolean(
-      video._younmeFrameReady &&
-      videoElement &&
-      videoElement.readyState >= 2 &&
-      videoElement.videoWidth > 0 &&
-      videoElement.videoHeight > 0
-    );
+    return Boolean(videoElement && videoElement.srcObject);
   }
   return Boolean(
     video.loadedmetadata ||
