@@ -22,6 +22,22 @@ const LANGUAGE_TEXT = {
   zh: ["我", "你"],
 };
 
+const PARTICIPANT_COLOR_PALETTE = [
+  [255, 76, 76],
+  [74, 169, 255],
+  [88, 235, 128],
+  [255, 86, 211],
+  [255, 203, 72],
+  [151, 91, 255],
+  [63, 232, 217],
+  [255, 132, 55],
+  [190, 238, 73],
+  [255, 104, 151],
+  [82, 111, 255],
+  [232, 232, 232],
+];
+const MIN_COLOR_DISTANCE_SQUARED = 12000;
+
 const revealVertexShader = `
   precision mediump float;
 
@@ -562,6 +578,7 @@ function gotData(data, id) {
       downlink: downlink,
       color: normalizeParticipantColor(presence.color, id),
     };
+    ensureDistinctLocalColor(id);
   } catch (error) {
     // Ignore non-presence data sent through the shared p5LiveMedia channel.
   }
@@ -621,7 +638,9 @@ function previewPresence(index) {
     language: language,
     text: languageText(language),
     downlink: 1 + ((index * 2.3) % 9),
-    color: participantColorFromId(`preview-${index}`),
+    color: PARTICIPANT_COLOR_PALETTE[
+      index % PARTICIPANT_COLOR_PALETTE.length
+    ].slice(),
   };
 }
 
@@ -802,7 +821,8 @@ function createSphereTextParticle(presence, sourceKey, distributeAcrossSphere) {
 }
 
 function createParticipantColor() {
-  return hslToRgb(Math.random() * 360, 0.82, 0.58);
+  const index = floor(Math.random() * PARTICIPANT_COLOR_PALETTE.length);
+  return PARTICIPANT_COLOR_PALETTE[index].slice();
 }
 
 function participantColorFromId(id) {
@@ -814,7 +834,9 @@ function participantColorFromId(id) {
     hash = Math.imul(hash, 16777619);
   }
 
-  return hslToRgb((hash >>> 0) % 360, 0.82, 0.58);
+  return PARTICIPANT_COLOR_PALETTE[
+    (hash >>> 0) % PARTICIPANT_COLOR_PALETTE.length
+  ].slice();
 }
 
 function normalizeParticipantColor(value, fallbackId) {
@@ -829,36 +851,62 @@ function normalizeParticipantColor(value, fallbackId) {
   return participantColorFromId(fallbackId);
 }
 
-function hslToRgb(hue, saturation, lightness) {
-  const chroma = (1 - abs(2 * lightness - 1)) * saturation;
-  const hueSection = (((hue % 360) + 360) % 360) / 60;
-  const secondary = chroma * (1 - abs((hueSection % 2) - 1));
-  let red = 0;
-  let green = 0;
-  let blue = 0;
-
-  if (hueSection < 1) {
-    red = chroma;
-    green = secondary;
-  } else if (hueSection < 2) {
-    red = secondary;
-    green = chroma;
-  } else if (hueSection < 3) {
-    green = chroma;
-    blue = secondary;
-  } else if (hueSection < 4) {
-    green = secondary;
-    blue = chroma;
-  } else if (hueSection < 5) {
-    red = secondary;
-    blue = chroma;
-  } else {
-    red = chroma;
-    blue = secondary;
+function ensureDistinctLocalColor(remoteId) {
+  if (!liveMedia || !liveMedia.socket || !liveMedia.socket.id) {
+    return;
   }
 
-  const match = lightness - chroma / 2;
-  return [red, green, blue].map((channel) => round((channel + match) * 255));
+  if (liveMedia.socket.id.localeCompare(remoteId) <= 0) {
+    return;
+  }
+
+  const reservedColors = Object.values(remotePresence).map(
+    (presence) => presence.color
+  );
+  const hasConflict = reservedColors.some(
+    (color) => colorDistanceSquared(localTextColor, color) < MIN_COLOR_DISTANCE_SQUARED
+  );
+
+  if (!hasConflict) {
+    return;
+  }
+
+  const startIndex = participantColorIndexFromId(liveMedia.socket.id);
+  for (let offset = 0; offset < PARTICIPANT_COLOR_PALETTE.length; offset++) {
+    const candidate =
+      PARTICIPANT_COLOR_PALETTE[
+        (startIndex + offset) % PARTICIPANT_COLOR_PALETTE.length
+      ];
+    const isAvailable = reservedColors.every(
+      (color) =>
+        colorDistanceSquared(candidate, color) >= MIN_COLOR_DISTANCE_SQUARED
+    );
+
+    if (isAvailable) {
+      localTextColor = candidate.slice();
+      refreshLocalPresence();
+      return;
+    }
+  }
+}
+
+function participantColorIndexFromId(id) {
+  const color = participantColorFromId(id);
+  return PARTICIPANT_COLOR_PALETTE.findIndex(
+    (candidate) => colorDistanceSquared(candidate, color) === 0
+  );
+}
+
+function colorDistanceSquared(first, second) {
+  if (!first || !second) {
+    return Infinity;
+  }
+
+  return (
+    sq(first[0] - second[0]) +
+    sq(first[1] - second[1]) +
+    sq(first[2] - second[2])
+  );
 }
 
 function handleWebglContextLost(event) {
