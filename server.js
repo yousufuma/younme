@@ -2,11 +2,13 @@ const express = require("express");
 const http = require("http");
 const path = require("path");
 const { Server } = require("socket.io");
+const indexHtml = require("./views/index");
 
 const app = express();
 const httpServer = http.createServer(app);
 const io = new Server(httpServer);
 const port = process.env.PORT || 3000;
+const publicDirectory = path.join(__dirname, "public");
 
 if (process.env.NODE_ENV !== "production") {
   app.get("/__preview", (request, response) => {
@@ -14,7 +16,11 @@ if (process.env.NODE_ENV !== "production") {
   });
 }
 
-app.use(express.static("public"));
+app.get("/", (request, response) => {
+  response.type("html").send(indexHtml);
+});
+
+app.use(express.static(publicDirectory));
 
 io.on("connection", (socket) => {
   socket.on("room_connect", (requestedRoom) => {

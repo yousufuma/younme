@@ -1,4 +1,4 @@
-<!doctype html>
+module.exports = `<!doctype html>
 <html lang="en">
   <head>
     <script type="text/javascript" src="simplepeer.min.js"></script>
@@ -13,4 +13,4 @@
   <body>
     <script src="sketch.js"></script>
   </body>
-</html>
+</html>`;
