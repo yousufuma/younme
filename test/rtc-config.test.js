@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createHmac } = require("node:crypto");
-const { createRtcConfig } = require("../lib/rtc-config");
+const { createRtcConfig, summarizeRtcConfig } = require("../lib/rtc-config");
 
 test("missing credentials explicitly report STUN-only, not relay success", async () => {
   const result = await createRtcConfig({});
@@ -43,4 +43,27 @@ test("provider errors cannot silently become a relay-ready response", async () =
   await assert.rejects(createRtcConfig(env, async () => ({ ok: false })), /TURN_PROVIDER_UNAVAILABLE/);
   await assert.rejects(createRtcConfig(env, async () => ({ ok: true, json: async () => ({ iceServers: [{ urls: "stun:only.example" }] }) })), /TURN_MISSING_RELAY/);
   await assert.rejects(createRtcConfig({ TURN_URLS: "https://wrong.example", TURN_SHARED_SECRET: "test" }), /TURN_INVALID_URLS/);
+});
+
+test("public status only reports safe relay facts", () => {
+  const status = summarizeRtcConfig({
+    relayConfigured: true,
+    iceServers: [
+      { urls: ["stun:stun.cloudflare.com:3478"] },
+      {
+        urls: [
+          "turn:turn.cloudflare.com:3478?transport=udp",
+          "turns:turn.cloudflare.com:443?transport=tcp",
+        ],
+        username: "temporary-user",
+        credential: "temporary-secret",
+      },
+    ],
+  });
+  assert.deepEqual(status, {
+    relayConfigured: true,
+    serverCount: 2,
+    protocols: ["stun", "turn", "turns"],
+  });
+  assert.equal(JSON.stringify(status).includes("temporary"), false);
 });

@@ -3,7 +3,7 @@ const http = require("http");
 const path = require("path");
 const { Server } = require("socket.io");
 const indexHtml = require("./views/index");
-const { rtcConfigHandler } = require("./lib/rtc-config");
+const { rtcConfigHandler, rtcStatusHandler } = require("./lib/rtc-config");
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -26,6 +26,7 @@ app.get("/", (request, response) => {
 });
 
 app.get("/api/rtc-config", rtcConfigHandler);
+app.get("/api/rtc-status", rtcStatusHandler);
 
 app.use(express.static(publicDirectory));
 

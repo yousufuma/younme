@@ -41,8 +41,10 @@ https://developers.cloudflare.com/realtime/turn/generate-credentials/
 
 ### Acceptance checks
 
-1. Load `/api/rtc-config`. `relayConfigured: true` means credentials were
-   obtained, **not** that media has successfully traversed a relay.
+1. Load `/api/rtc-status`. It reports only whether credentials were obtained
+   and the enabled protocols; it never returns TURN credentials. A result of
+   `relayConfigured: true` means credentials were obtained, **not** that media
+   has successfully traversed a relay.
 2. Open the site in two clients with `?relay=1`. This diagnostic mode enforces
    `iceTransportPolicy: "relay"`; a successful local direct path cannot mask
    a broken TURN service. Both clients must show remote video and each should
