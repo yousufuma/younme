@@ -119,8 +119,10 @@ class p5LiveMedia {
 
         this.socket.on('peer_disconnect', (data) => {
             //console.log("simplepeer has disconnected " + data);
+            this.callOnDisconnectCallback(data);
             for (let i = 0; i < this.simplepeers.length; i++) {
                 if (this.simplepeers[i].socket_id == data) {
+                    this.simplepeers[i].destroy();
                     //console.log("Removed the DOM Element if it exits");
                     this.removeDomElement(this.simplepeers[i]);
                     //console.log("Removing simplepeer: " + i);
@@ -128,7 +130,6 @@ class p5LiveMedia {
                     break;
                 } 
             }	
-            this.callOnDisconnectCallback(data);
         });			
 
         // Receive listresults from server
@@ -136,7 +137,10 @@ class p5LiveMedia {
             //console.log(data);
             for (let i = 0; i < data.length; i++) {
                 // Make sure it's not us
-                if (data[i] != this.socket.id) {	
+                if (
+                    data[i] != this.socket.id &&
+                    !this.simplepeers.some(peer => peer.socket_id == data[i])
+                ) {
 
                     // create a new simplepeer and we'll be the "initiator"			
                     let simplepeer = new SimplePeerWrapper(this,
@@ -240,8 +244,8 @@ class p5LiveMedia {
     }
 
     removeDomElement(ssp) {
-        if (ssp.domElement) {
-            document.body.removeChild(ssp.domElement);
+        if (ssp.domElement && ssp.domElement.parentNode) {
+            ssp.domElement.parentNode.removeChild(ssp.domElement);
         }
     }
 
@@ -368,7 +372,12 @@ class SimplePeerWrapper {
             // ERR_SIGNALING
             // ERR_DATA_CHANNEL
             // ERR_CONNECTION_FAILURE
+            this.connected = false;
             console.log(err);
+        });
+
+        this.simplepeer.on('close', () => {
+            this.connected = false;
         });
     }
 
@@ -382,5 +391,18 @@ class SimplePeerWrapper {
 
     inputsignal(sig) {
         this.simplepeer.signal(sig);
+    }
+
+    destroy() {
+        this.connected = false;
+
+        if (this.domElement && this.domElement.srcObject) {
+            this.domElement.srcObject.getTracks().forEach(track => track.stop());
+            this.domElement.srcObject = null;
+        }
+
+        if (this.simplepeer && !this.simplepeer.destroyed) {
+            this.simplepeer.destroy();
+        }
     }
 }		

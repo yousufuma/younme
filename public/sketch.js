@@ -1,8 +1,8 @@
 const MAX_PARTICIPANTS = 12;
 const TOTAL_RINGS = 72;
-const SOLO_VISIBLE_RINGS = 14;
+const SOLO_VISIBLE_RINGS = 22;
 const SOURCE_STRIP_COUNT = 12;
-const TEXTURE_SIZE = 1024;
+const TEXTURE_SIZE = 768;
 const PRESENCE_BROADCAST_INTERVAL = 1500;
 const SCENE_REFERENCE_SIZE = 768;
 const SCENE_OFFSET_X = -130;
@@ -76,6 +76,8 @@ let lastPresenceBroadcast = -PRESENCE_BROADCAST_INTERVAL;
 let touchDragPosition = null;
 let sphereTextParticles = [];
 let knownSphereTextSources = new Set();
+let localTextColor;
+let webglContextState = "active";
 
 function preload() {
   sculpture = loadModel("neo.obj", true);
@@ -84,8 +86,14 @@ function preload() {
 function setup() {
   canvas = createCanvas(windowWidth, windowHeight, WEBGL);
   canvas.elt.setAttribute("aria-label", "Shared webcam sculpture");
+  canvas.elt.addEventListener("webglcontextlost", handleWebglContextLost);
+  canvas.elt.addEventListener(
+    "webglcontextrestored",
+    handleWebglContextRestored
+  );
 
   pixelDensity(1);
+  frameRate(30);
   angleMode(DEGREES);
   textureMode(IMAGE);
   textureWrap(CLAMP);
@@ -95,6 +103,7 @@ function setup() {
   sphereTexture = createGraphics(TEXTURE_SIZE, TEXTURE_SIZE);
   sphereTexture.pixelDensity(1);
   revealShader = createShader(revealVertexShader, revealFragmentShader);
+  localTextColor = createParticipantColor();
   localPresence = readBrowserPresence();
   listenForPresenceChanges();
 
@@ -175,9 +184,10 @@ function draw() {
   canvas.elt.dataset.receivedSignals = String(
     previewNetworkState.receivedSignals
   );
+  canvas.elt.dataset.webglContext = webglContextState;
   canvas.elt.setAttribute(
     "aria-label",
-    `Shared webcam sculpture: ${participants.length} participants, ${Object.keys(remoteVideos).length} remote videos, ${liveMedia ? liveMedia.simplepeers.filter((peer) => peer.connected).length : 0} connected peers, socket ${liveMedia && liveMedia.socket && liveMedia.socket.connected ? "connected" : "disconnected"}`
+    `Shared webcam sculpture: ${participants.length} participants, ${Object.keys(remoteVideos).length} remote videos, ${liveMedia ? liveMedia.simplepeers.filter((peer) => peer.connected).length : 0} connected peers, socket ${liveMedia && liveMedia.socket && liveMedia.socket.connected ? "connected" : "disconnected"}, render ${webglContextState}`
   );
 
   if (previewNetworkEnabled) {
@@ -191,8 +201,8 @@ function draw() {
     constrain(participantCount, 1, MAX_PARTICIPANTS),
     1,
     MAX_PARTICIPANTS,
-    2.1,
-    3.15
+    2.75,
+    3.25
   );
   const portraitScale = height > width ? 0.82 : 1;
   const sceneScale = constrain(
@@ -319,6 +329,13 @@ function connectLiveMedia(stream, room) {
   liveMedia.on("stream", gotStream);
   liveMedia.on("data", gotData);
   liveMedia.on("disconnect", gotDisconnect);
+
+  liveMedia.socket.on("connect", () => {
+    if (!previewNetworkEnabled && liveMedia.socket.id) {
+      localTextColor = participantColorFromId(liveMedia.socket.id);
+      refreshLocalPresence();
+    }
+  });
 
   liveMedia.socket.on("listresults", (ids) => {
     previewNetworkState.listedPeers = ids.length;
@@ -504,11 +521,23 @@ function videoIsReady(video) {
 
 function gotDisconnect(id) {
   const video = remoteVideos[id];
-  if (video) {
-    video.remove();
-  }
   delete remoteVideos[id];
   delete remotePresence[id];
+
+  if (video) {
+    try {
+      video.remove();
+    } catch (error) {
+      const videoElement = video.elt;
+      if (videoElement && videoElement.srcObject) {
+        videoElement.srcObject.getTracks().forEach((track) => track.stop());
+        videoElement.srcObject = null;
+      }
+      if (videoElement && videoElement.parentNode) {
+        videoElement.parentNode.removeChild(videoElement);
+      }
+    }
+  }
 }
 
 function gotData(data, id) {
@@ -531,6 +560,7 @@ function gotData(data, id) {
       language: language,
       text: languageText(language),
       downlink: downlink,
+      color: normalizeParticipantColor(presence.color, id),
     };
   } catch (error) {
     // Ignore non-presence data sent through the shared p5LiveMedia channel.
@@ -550,6 +580,7 @@ function readBrowserPresence() {
     language: language,
     text: languageText(language),
     downlink: downlink,
+    color: localTextColor || createParticipantColor(),
   };
 }
 
@@ -590,6 +621,7 @@ function previewPresence(index) {
     language: language,
     text: languageText(language),
     downlink: 1 + ((index * 2.3) % 9),
+    color: participantColorFromId(`preview-${index}`),
   };
 }
 
@@ -624,6 +656,7 @@ function broadcastPresenceIfDue() {
       type: "presence",
       language: presence.language,
       downlink: presence.downlink,
+      color: presence.color,
     })
   );
   lastPresenceBroadcast = millis();
@@ -690,17 +723,28 @@ function drawSphereTexture(presences) {
     const alpha =
       (presence ? sphereTextAlpha(presence) : particle.baseAlpha) *
       min(fadeIn, fadeOut);
+    const textColor = presence
+      ? normalizeParticipantColor(presence.color, particle.sourceKey)
+      : particle.color;
+    const textSize =
+      (presence ? sphereTextSize(presence) : particle.baseTextSize) *
+      particle.sizeFactor;
     const x =
       particle.x +
       sin(frameCount * particle.waveSpeed + particle.wavePhase) *
         particle.waveWidth;
     const y = lerp(particle.startY, particle.endY, progress);
 
-    sphereTexture.textSize(particle.textSize);
+    sphereTexture.textSize(textSize);
     for (let trailIndex = particle.trailLength; trailIndex >= 0; trailIndex--) {
       const trailAlpha =
         alpha * (trailIndex === 0 ? 1 : 0.34 / trailIndex);
-      sphereTexture.fill(30, 255, 105, trailAlpha);
+      sphereTexture.fill(
+        textColor[0],
+        textColor[1],
+        textColor[2],
+        trailAlpha
+      );
       sphereTexture.text(
         particle.text,
         x,
@@ -725,6 +769,11 @@ function sphereTextAlpha(presence) {
   return map(constrain(downlink, 0, 10), 0, 10, 65, 235);
 }
 
+function sphereTextSize(presence) {
+  const downlink = Number.isFinite(presence.downlink) ? presence.downlink : 5;
+  return map(constrain(downlink, 0, 10), 0, 10, 30, 66);
+}
+
 function createSphereTextParticle(presence, sourceKey, distributeAcrossSphere) {
   const lifetime = random(150, 310);
   const initialProgress = distributeAcrossSphere ? random(0, 0.9) : 0;
@@ -735,8 +784,10 @@ function createSphereTextParticle(presence, sourceKey, distributeAcrossSphere) {
   return {
     sourceKey: sourceKey,
     text: random(words),
-    textSize: random(42, 62),
+    baseTextSize: sphereTextSize(presence),
+    sizeFactor: random(0.86, 1.14),
     baseAlpha: sphereTextAlpha(presence),
+    color: normalizeParticipantColor(presence.color, sourceKey),
     x: random(20, TEXTURE_SIZE - 90),
     startY: random(-260, -55),
     endY: random(TEXTURE_SIZE + 70, TEXTURE_SIZE + 260),
@@ -748,4 +799,76 @@ function createSphereTextParticle(presence, sourceKey, distributeAcrossSphere) {
     life: lifetime * initialProgress,
     lifetime: lifetime,
   };
+}
+
+function createParticipantColor() {
+  return hslToRgb(Math.random() * 360, 0.82, 0.58);
+}
+
+function participantColorFromId(id) {
+  const text = String(id || "participant");
+  let hash = 2166136261;
+
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return hslToRgb((hash >>> 0) % 360, 0.82, 0.58);
+}
+
+function normalizeParticipantColor(value, fallbackId) {
+  if (
+    Array.isArray(value) &&
+    value.length === 3 &&
+    value.every((channel) => Number.isFinite(channel))
+  ) {
+    return value.map((channel) => constrain(round(channel), 0, 255));
+  }
+
+  return participantColorFromId(fallbackId);
+}
+
+function hslToRgb(hue, saturation, lightness) {
+  const chroma = (1 - abs(2 * lightness - 1)) * saturation;
+  const hueSection = (((hue % 360) + 360) % 360) / 60;
+  const secondary = chroma * (1 - abs((hueSection % 2) - 1));
+  let red = 0;
+  let green = 0;
+  let blue = 0;
+
+  if (hueSection < 1) {
+    red = chroma;
+    green = secondary;
+  } else if (hueSection < 2) {
+    red = secondary;
+    green = chroma;
+  } else if (hueSection < 3) {
+    green = chroma;
+    blue = secondary;
+  } else if (hueSection < 4) {
+    green = secondary;
+    blue = chroma;
+  } else if (hueSection < 5) {
+    red = secondary;
+    blue = chroma;
+  } else {
+    red = chroma;
+    blue = secondary;
+  }
+
+  const match = lightness - chroma / 2;
+  return [red, green, blue].map((channel) => round((channel + match) * 255));
+}
+
+function handleWebglContextLost(event) {
+  event.preventDefault();
+  webglContextState = "lost";
+  noLoop();
+}
+
+function handleWebglContextRestored() {
+  revealShader = createShader(revealVertexShader, revealFragmentShader);
+  webglContextState = "active";
+  loop();
 }
