@@ -314,7 +314,7 @@ function updateConnectionDebugPanel(participantCount) {
       typeof element.srcObject.getVideoTracks === "function"
       ? element.srcObject.getVideoTracks()[0]
       : null;
-    return `${element ? element.readyState : "-"}/${element ? `${element.videoWidth}x${element.videoHeight}` : "-"}/${video.width || 0}x${video.height || 0}/${track ? track.readyState : "no-track"}`;
+    return `${element ? element.readyState : "-"}/${element ? `${element.videoWidth}x${element.videoHeight}` : "-"}/${video.width || 0}x${video.height || 0}/${track ? track.readyState : "no-track"}/${video._younmeMaterialDrawn ? "material" : "no-material"}`;
   });
 
   connectionDebugPanel.textContent = [
@@ -473,10 +473,40 @@ function drawVideoRing(video, ringIndex, sequenceIndex) {
   const destinationY = ringIndex * cellHeight;
   const destinationHeight = ceil(cellHeight);
 
-  const sourceWidth = video.width || video.elt.videoWidth || 1;
-  const sourceHeight = video.height || video.elt.videoHeight || 1;
+  const videoElement = video.elt || video;
+  const sourceWidth = videoElement.videoWidth || video.width || 1;
+  const sourceHeight = videoElement.videoHeight || video.height || 1;
   const sourceStripHeight = max(1, sourceHeight / SOURCE_STRIP_COUNT);
   const sourceY = (sequenceIndex % SOURCE_STRIP_COUNT) * sourceStripHeight;
+
+  if (video._younmeRemote && videoElement.readyState >= 2) {
+    try {
+      // Safari can decode a remote MediaStream correctly but still fail when
+      // p5 unwraps its MediaElement. Copy the native video frame straight into
+      // the 2D material canvas before that canvas becomes the WebGL texture.
+      materialTexture.drawingContext.drawImage(
+        videoElement,
+        0,
+        sourceY,
+        sourceWidth,
+        sourceStripHeight,
+        0,
+        destinationY,
+        TEXTURE_SIZE,
+        destinationHeight
+      );
+      video._younmeMaterialDrawn = true;
+      return;
+    } catch (error) {
+      video._younmeMaterialDrawn = false;
+      if (!video._younmeMaterialErrorReported) {
+        video._younmeMaterialErrorReported = true;
+        recordConnectionEvent("remote-material-error", {
+          name: error && error.name ? error.name : "DRAW_ERROR",
+        });
+      }
+    }
+  }
 
   materialTexture.image(
     video,
