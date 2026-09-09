@@ -284,7 +284,13 @@ class SimplePeerWrapper {
     constructor(p5lm, initiator, socket_id, socket, stream) {
         this.simplepeer = new SimplePeer({
             initiator: initiator,
-            trickle: false
+            trickle: true,
+            config: {
+                iceServers: [
+                    { urls: "stun:stun.l.google.com:19302" },
+                    { urls: "stun:stun1.l.google.com:19302" }
+                ]
+            }
         });
 
         this.p5livemedia = p5lm;

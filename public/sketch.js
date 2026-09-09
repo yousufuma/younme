@@ -1,6 +1,7 @@
 const MAX_PARTICIPANTS = 12;
-const RINGS_PER_PARTICIPANT = 4;
-const TOTAL_RINGS = MAX_PARTICIPANTS * RINGS_PER_PARTICIPANT;
+const TOTAL_RINGS = 72;
+const SOLO_VISIBLE_RINGS = 14;
+const SOURCE_STRIP_COUNT = 12;
 const TEXTURE_SIZE = 1024;
 const PRESENCE_BROADCAST_INTERVAL = 1500;
 const SCENE_REFERENCE_SIZE = 768;
@@ -72,6 +73,8 @@ let localPresence;
 let remotePresence = {};
 let lastPresenceBroadcast = -PRESENCE_BROADCAST_INTERVAL;
 let touchDragPosition = null;
+let sphereTextParticles = [];
+let knownSphereTextSources = new Set();
 
 function preload() {
   sculpture = loadModel("neo.obj", true);
@@ -126,7 +129,7 @@ function setup() {
       },
     },
     function (stream) {
-      connectLiveMedia(stream, "Shared Space");
+      connectLiveMedia(stream, "younme-public-sculpture-v1");
     }
   );
   webcam.elt.muted = true;
@@ -144,11 +147,16 @@ function draw() {
   drawSphereTexture(getPresenceContributors());
   drawMaterial(participants);
 
+  canvas.elt.dataset.participants = String(participants.length);
+  canvas.elt.dataset.remoteParticipants = String(
+    Object.keys(remoteVideos).length
+  );
+  canvas.elt.dataset.sphereTextParticles = String(sphereTextParticles.length);
+  canvas.elt.dataset.signaling = previewNetworkEnabled
+    ? "local-preview"
+    : "p5livemedia-public";
+
   if (previewNetworkEnabled) {
-    canvas.elt.dataset.participants = String(participants.length);
-    canvas.elt.dataset.remoteParticipants = String(
-      Object.keys(remoteVideos).length
-    );
     canvas.elt.dataset.remotePresence = String(
       Object.keys(remotePresence).length
     );
@@ -166,6 +174,10 @@ function draw() {
     canvas.elt.dataset.listedPeers = String(previewNetworkState.listedPeers);
     canvas.elt.dataset.receivedSignals = String(
       previewNetworkState.receivedSignals
+    );
+    canvas.elt.setAttribute(
+      "aria-label",
+      `WebRTC preview: ${participants.length} participants, ${Object.keys(remoteVideos).length} remote videos, ${previewNetworkState.receivedSignals} signals, ${previewNetworkState.listedPeers} listed peers, ${liveMedia ? liveMedia.simplepeers.length : 0} peer connections, ${liveMedia ? liveMedia.simplepeers.filter((peer) => peer.connected).length : 0} connected peers, socket ${liveMedia && liveMedia.socket && liveMedia.socket.connected ? "connected" : "disconnected"}`
     );
   }
 
@@ -243,7 +255,7 @@ function getParticipants() {
 
     for (const id in remoteVideos) {
       const video = remoteVideos[id];
-      if (video && video.loadedmetadata) {
+      if (videoIsReady(video)) {
         participants.push({ id: id, video: video });
       }
     }
@@ -254,13 +266,13 @@ function getParticipants() {
   const participants = [];
   const localId = liveMedia && liveMedia.socket ? liveMedia.socket.id : "local";
 
-  if (webcam && webcam.loadedmetadata) {
+  if (videoIsReady(webcam)) {
     participants.push({ id: localId || "local", video: webcam });
   }
 
   for (const id in remoteVideos) {
     const video = remoteVideos[id];
-    if (video && video.loadedmetadata) {
+    if (videoIsReady(video)) {
       participants.push({ id: id, video: video });
     }
   }
@@ -288,16 +300,16 @@ function createPreviewParticipants(count, seed) {
 }
 
 function connectLiveMedia(stream, room) {
-  SimplePeer.config = {
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-  };
+  const signalingHost = previewNetworkEnabled
+    ? window.location.origin
+    : undefined;
 
   liveMedia = new p5LiveMedia(
     p5.instance,
     "CAPTURE",
     stream,
     room,
-    window.location.origin
+    signalingHost
   );
   liveMedia.on("stream", gotStream);
   liveMedia.on("data", gotData);
@@ -340,9 +352,14 @@ function drawMaterial(participants) {
     return;
   }
 
-  const visibleRingCount = min(
-    TOTAL_RINGS,
-    participants.length * RINGS_PER_PARTICIPANT
+  const visibleRingCount = round(
+    map(
+      constrain(participants.length, 1, MAX_PARTICIPANTS),
+      1,
+      MAX_PARTICIPANTS,
+      SOLO_VISIBLE_RINGS,
+      TOTAL_RINGS
+    )
   );
   const ringOrder = shuffledRingOrder();
 
@@ -361,9 +378,8 @@ function drawVideoRing(video, ringIndex, sequenceIndex) {
 
   const sourceWidth = video.width || video.elt.videoWidth || 1;
   const sourceHeight = video.height || video.elt.videoHeight || 1;
-  const sourceStripHeight = max(1, sourceHeight / RINGS_PER_PARTICIPANT);
-  const sourceY =
-    (sequenceIndex % RINGS_PER_PARTICIPANT) * sourceStripHeight;
+  const sourceStripHeight = max(1, sourceHeight / SOURCE_STRIP_COUNT);
+  const sourceY = (sequenceIndex % SOURCE_STRIP_COUNT) * sourceStripHeight;
 
   materialTexture.image(
     video,
@@ -445,11 +461,42 @@ function windowResized() {
 }
 
 function gotStream(stream, id) {
-  stream.elt.muted = true;
-  stream.elt.autoplay = true;
-  stream.elt.setAttribute("playsinline", "");
+  const videoElement = stream.elt;
+  const markVideoReady = () => {
+    stream.loadedmetadata = true;
+    if (videoElement.videoWidth > 0 && videoElement.videoHeight > 0) {
+      stream.width = videoElement.videoWidth;
+      stream.height = videoElement.videoHeight;
+    }
+  };
+
+  videoElement.muted = true;
+  videoElement.autoplay = true;
+  videoElement.setAttribute("playsinline", "");
+  videoElement.addEventListener("loadedmetadata", markVideoReady);
+  videoElement.addEventListener("loadeddata", markVideoReady);
   stream.hide();
+  markVideoReady();
   remoteVideos[id] = stream;
+
+  const playPromise = videoElement.play();
+  if (playPromise && typeof playPromise.catch === "function") {
+    playPromise.catch(() => {});
+  }
+}
+
+function videoIsReady(video) {
+  if (!video) {
+    return false;
+  }
+
+  const videoElement = video.elt || video;
+  return Boolean(
+    video.loadedmetadata ||
+      (videoElement &&
+        videoElement.readyState >= 2 &&
+        (videoElement.videoWidth > 0 || video.width > 0))
+  );
 }
 
 function gotDisconnect(id) {
@@ -584,36 +631,105 @@ function drawSphereTexture(presences) {
   sphereTexture.push();
   sphereTexture.textAlign(LEFT, CENTER);
   sphereTexture.textStyle(BOLD);
-  sphereTexture.textSize(54);
   sphereTexture.noStroke();
 
-  let lineIndex = 0;
-  for (
-    let participantIndex = 0;
-    participantIndex < presences.length;
-    participantIndex++
-  ) {
-    const presence = presences[participantIndex];
-    const downlink = Number.isFinite(presence.downlink) ? presence.downlink : 5;
-    const lineCount = floor(map(constrain(downlink, 0, 10), 0, 10, 2, 11));
-    const alpha = map(constrain(downlink, 0, 10), 0, 10, 55, 235);
-    const text = presence.text || languageText(presence.language);
-    const advance = max(230, sphereTexture.textWidth(text) + 70);
+  const sources = presences.map((presence, index) => ({
+    key: `${index}:${presence.language || "und"}:${presence.text || ""}`,
+    presence: presence,
+  }));
+  const activeKeys = new Set(sources.map((source) => source.key));
+  const presenceByKey = new Map(
+    sources.map((source) => [source.key, source.presence])
+  );
 
-    sphereTexture.fill(30, 255, 105, alpha);
+  for (const source of sources) {
+    const targetCount = sphereTextTargetCount(source.presence);
+    const currentCount = sphereTextParticles.filter(
+      (particle) => particle.sourceKey === source.key
+    ).length;
+    const isNewSource = !knownSphereTextSources.has(source.key);
+    const spawnCount = isNewSource
+      ? max(0, targetCount - currentCount)
+      : min(1, max(0, targetCount - currentCount));
 
-    for (let i = 0; i < lineCount; i++) {
-      const y = ((lineIndex + i) * 67 + participantIndex * 29) % TEXTURE_SIZE;
-      const speed = 0.45 + participantIndex * 0.08;
-      const offset = -((frameCount * speed + i * 83) % advance);
-
-      for (let x = offset; x < TEXTURE_SIZE + advance; x += advance) {
-        sphereTexture.text(text, x, y);
-      }
+    for (let i = 0; i < spawnCount; i++) {
+      sphereTextParticles.push(
+        createSphereTextParticle(
+          source.presence,
+          source.key,
+          isNewSource
+        )
+      );
     }
 
-    lineIndex += lineCount;
+    knownSphereTextSources.add(source.key);
   }
 
+  for (const sourceKey of Array.from(knownSphereTextSources)) {
+    if (!activeKeys.has(sourceKey)) {
+      knownSphereTextSources.delete(sourceKey);
+    }
+  }
+
+  const frameStep = constrain(deltaTime / (1000 / 60), 0.25, 3);
+  const nextParticles = [];
+
+  for (const particle of sphereTextParticles) {
+    particle.life += frameStep;
+    if (particle.life >= particle.lifetime) {
+      continue;
+    }
+
+    const progress = particle.life / particle.lifetime;
+    const fadeIn = constrain(progress / 0.12, 0, 1);
+    const fadeOut = constrain((1 - progress) / 0.28, 0, 1);
+    const presence = presenceByKey.get(particle.sourceKey);
+    const alpha =
+      (presence ? sphereTextAlpha(presence) : particle.baseAlpha) *
+      min(fadeIn, fadeOut);
+    const x = lerp(particle.startX, particle.endX, progress);
+    const y =
+      particle.y +
+      sin(frameCount * particle.waveSpeed + particle.wavePhase) *
+        particle.waveHeight;
+
+    sphereTexture.textSize(particle.textSize);
+    sphereTexture.fill(30, 255, 105, alpha);
+    sphereTexture.text(particle.text, x, y);
+    nextParticles.push(particle);
+  }
+
+  sphereTextParticles = nextParticles;
+
   sphereTexture.pop();
+}
+
+function sphereTextTargetCount(presence) {
+  const downlink = Number.isFinite(presence.downlink) ? presence.downlink : 5;
+  return floor(map(constrain(downlink, 0, 10), 0, 10, 5, 18));
+}
+
+function sphereTextAlpha(presence) {
+  const downlink = Number.isFinite(presence.downlink) ? presence.downlink : 5;
+  return map(constrain(downlink, 0, 10), 0, 10, 65, 235);
+}
+
+function createSphereTextParticle(presence, sourceKey, distributeAcrossSphere) {
+  const lifetime = random(210, 390);
+  const initialProgress = distributeAcrossSphere ? random(0, 0.82) : 0;
+
+  return {
+    sourceKey: sourceKey,
+    text: presence.text || languageText(presence.language),
+    textSize: random(42, 62),
+    baseAlpha: sphereTextAlpha(presence),
+    startX: random(-330, -150),
+    endX: random(TEXTURE_SIZE + 120, TEXTURE_SIZE + 360),
+    y: random(35, TEXTURE_SIZE - 35),
+    waveHeight: random(3, 14),
+    waveSpeed: random(0.35, 0.9),
+    wavePhase: random(360),
+    life: lifetime * initialProgress,
+    lifetime: lifetime,
+  };
 }
