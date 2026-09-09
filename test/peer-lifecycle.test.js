@@ -15,17 +15,44 @@ function fixture() {
   const socket = new EventEmitter();
   socket.id = "local";
   socket.connected = true;
+  const createdVideos = [];
+  const document = {
+    body: {
+      appendChild(element) { element.parentNode = this; },
+      removeChild(element) { element.parentNode = null; },
+    },
+    createElement() {
+      const listeners = new Map();
+      const element = {
+        style: {},
+        readyState: 0,
+        videoWidth: 0,
+        videoHeight: 0,
+        setAttribute() {},
+        addEventListener(name, callback) { listeners.set(name, callback); },
+        emit(name) { listeners.get(name)?.({ target: element }); },
+        play() { return Promise.resolve(); },
+      };
+      createdVideos.push(element);
+      return element;
+    },
+  };
+  class MediaElement {
+    constructor(element) { this.elt = element; this.width = 0; this.height = 0; }
+  }
   const context = vm.createContext({
     console, SimplePeer: FakePeer, io: { connect: () => socket },
     window: { younmeConnection: { peers: {} } }, recordConnectionEvent() {},
+    document, p5: { MediaElement },
     setTimeout(fn) { timers.set(++nextTimer, fn); return nextTimer; },
     clearTimeout(id) { timers.delete(id); },
   });
   vm.runInContext(`${readFileSync(require.resolve("../public/p5livemedia.js"), "utf8")}\nthis.LiveMedia = p5LiveMedia;`, context);
   const config = { iceServers: [{ urls: "turns:example:443", username: "temporary", credential: "temporary" }], iceTransportPolicy: "relay" };
   const stream = { id: "camera", stopped: false };
-  const media = new context.LiveMedia({}, "CAPTURE", stream, "room", "http://localhost", config);
-  return { media, socket, timers, config, stream, context };
+  const sketch = { _elements: [] };
+  const media = new context.LiveMedia(sketch, "CAPTURE", stream, "room", "http://localhost", config);
+  return { media, socket, timers, config, stream, context, sketch, createdVideos };
 }
 
 test("both roles receive relay policy and camera in their first negotiation", () => {
@@ -77,4 +104,28 @@ test("unreachable peer retries are bounded", () => {
   assert.equal(media.simplepeers.length, 0);
   assert.equal(timers.size, 0);
   assert.equal(media.retryCounts.get("remote"), 3);
+});
+
+test("remote video stays in the DOM and becomes drawable only with frame data", () => {
+  const { media, socket, sketch } = fixture();
+  media.on("stream", () => {});
+  socket.emit("listresults", ["remote"]);
+  const peer = media.simplepeers[0];
+  peer.simplepeer.emit("stream", { id: "remote-stream" });
+  const video = peer.domElement;
+  const wrapped = sketch._elements[0];
+
+  assert.equal(video.style.position, "fixed");
+  assert.equal(video.style.opacity, "0.01");
+  assert.equal(video.style.display, undefined);
+  assert.equal(video.muted, true);
+  assert.equal(video.playsInline, true);
+  assert.equal(wrapped.loadedmetadata, false);
+
+  video.videoWidth = 640;
+  video.videoHeight = 480;
+  video.readyState = 2;
+  video.emit("loadeddata");
+  assert.equal(wrapped.loadedmetadata, true);
+  assert.equal(wrapped._younmeFrameReady, true);
 });

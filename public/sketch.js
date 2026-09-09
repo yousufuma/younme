@@ -504,20 +504,37 @@ function windowResized() {
 
 function gotStream(stream, id) {
   const videoElement = stream.elt;
+  stream._younmeRemote = true;
   const markVideoReady = () => {
-    stream.loadedmetadata = true;
-    if (videoElement.videoWidth > 0 && videoElement.videoHeight > 0) {
+    const hasFrame =
+      videoElement.readyState >= 2 &&
+      videoElement.videoWidth > 0 &&
+      videoElement.videoHeight > 0;
+    if (hasFrame) {
+      stream._younmeFrameReady = true;
+      stream.loadedmetadata = true;
       stream.width = videoElement.videoWidth;
       stream.height = videoElement.videoHeight;
+      if (window.younmeConnection.peers[id]) {
+        window.younmeConnection.peers[id].frame = true;
+      }
+      recordConnectionEvent("remote-frame", { peer: id });
     }
   };
 
   videoElement.muted = true;
+  videoElement.defaultMuted = true;
   videoElement.autoplay = true;
+  videoElement.playsInline = true;
   videoElement.setAttribute("playsinline", "");
+  videoElement.setAttribute("webkit-playsinline", "");
   videoElement.addEventListener("loadedmetadata", markVideoReady);
   videoElement.addEventListener("loadeddata", markVideoReady);
-  stream.hide();
+  videoElement.addEventListener("canplay", markVideoReady);
+  videoElement.addEventListener("playing", markVideoReady);
+  if (typeof videoElement.requestVideoFrameCallback === "function") {
+    videoElement.requestVideoFrameCallback(markVideoReady);
+  }
   markVideoReady();
   remoteVideos[id] = stream;
 
@@ -533,6 +550,15 @@ function videoIsReady(video) {
   }
 
   const videoElement = video.elt || video;
+  if (video._younmeRemote) {
+    return Boolean(
+      video._younmeFrameReady &&
+      videoElement &&
+      videoElement.readyState >= 2 &&
+      videoElement.videoWidth > 0 &&
+      videoElement.videoHeight > 0
+    );
+  }
   return Boolean(
     video.loadedmetadata ||
       (videoElement &&

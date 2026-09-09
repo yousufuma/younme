@@ -294,23 +294,46 @@ class p5LiveMedia {
             //////////////////////
             // Copied from createCapture and addElement in p5.js source 10/12/2020
             //const videoEl = addElement(domElement, this.sketch, true);
+            // Safari can stop decoding a remote WebRTC video when the source is
+            // display:none. Keep a tiny, non-interactive element in the page so
+            // p5 can copy decoded frames into the sculpture texture.
+            domElement.muted = true;
+            domElement.defaultMuted = true;
+            domElement.autoplay = true;
+            domElement.playsInline = true;
+            domElement.setAttribute('playsinline', '');
+            domElement.setAttribute('webkit-playsinline', '');
+            domElement.setAttribute('aria-hidden', 'true');
+            domElement.style.position = 'fixed';
+            domElement.style.left = '0';
+            domElement.style.top = '0';
+            domElement.style.width = '2px';
+            domElement.style.height = '2px';
+            domElement.style.opacity = '0.01';
+            domElement.style.pointerEvents = 'none';
+            domElement.style.zIndex = '-1';
             document.body.appendChild(domElement);
             let videoEl = new p5.MediaElement(domElement, this.sketch);
             this.sketch._elements.push(videoEl);
 
             videoEl.loadedmetadata = false;
-            // set width and height onload metadata
-            domElement.addEventListener('loadedmetadata', function() {
+            // A metadata event does not guarantee a decodable frame on iOS.
+            // Only make the stream eligible for p5 texture drawing once the
+            // video has dimensions and current frame data.
+            const markFrameAvailable = function() {
               domElement.play().catch(() => {});
-              if (domElement.width) {
-                videoEl.width = domElement.width;
-                videoEl.height = domElement.height;
-              } else {
+              if (domElement.videoWidth > 0 && domElement.videoHeight > 0) {
                 videoEl.width = videoEl.elt.width = domElement.videoWidth;
                 videoEl.height = videoEl.elt.height = domElement.videoHeight;
+                if (domElement.readyState >= 2) {
+                  videoEl.loadedmetadata = true;
+                  videoEl._younmeFrameReady = true;
+                }
               }
-              videoEl.loadedmetadata = true;
-            });
+            };
+            domElement.addEventListener('loadedmetadata', markFrameAvailable);
+            domElement.addEventListener('loadeddata', markFrameAvailable);
+            domElement.addEventListener('canplay', markFrameAvailable);
             /////////////////////////////
 
             this.onStreamCallback(videoEl, id);
@@ -405,8 +428,11 @@ class SimplePeerWrapper {
             this.domElement.id = this.socket_id;
             this.domElement.srcObject = stream;
             this.domElement.muted = true;
+            this.domElement.defaultMuted = true;
             this.domElement.autoplay = true;
+            this.domElement.playsInline = true;
             this.domElement.setAttribute('playsinline', '');
+            this.domElement.setAttribute('webkit-playsinline', '');
             this.domElement.onloadedmetadata = function(e) {
                 e.target.play().catch(() => {});
             };
