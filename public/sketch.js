@@ -175,14 +175,14 @@ function draw() {
   canvas.elt.dataset.receivedSignals = String(
     previewNetworkState.receivedSignals
   );
+  canvas.elt.setAttribute(
+    "aria-label",
+    `Shared webcam sculpture: ${participants.length} participants, ${Object.keys(remoteVideos).length} remote videos, ${liveMedia ? liveMedia.simplepeers.filter((peer) => peer.connected).length : 0} connected peers, socket ${liveMedia && liveMedia.socket && liveMedia.socket.connected ? "connected" : "disconnected"}`
+  );
 
   if (previewNetworkEnabled) {
     canvas.elt.dataset.remotePresence = String(
       Object.keys(remotePresence).length
-    );
-    canvas.elt.setAttribute(
-      "aria-label",
-      `WebRTC preview: ${participants.length} participants, ${Object.keys(remoteVideos).length} remote videos, ${previewNetworkState.receivedSignals} signals, ${previewNetworkState.listedPeers} listed peers, ${liveMedia ? liveMedia.simplepeers.length : 0} peer connections, ${liveMedia ? liveMedia.simplepeers.filter((peer) => peer.connected).length : 0} connected peers, socket ${liveMedia && liveMedia.socket && liveMedia.socket.connected ? "connected" : "disconnected"}`
     );
   }
 
