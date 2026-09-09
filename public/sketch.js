@@ -8,6 +8,8 @@ const SCENE_REFERENCE_SIZE = 768;
 const SCENE_OFFSET_X = -130;
 const SCENE_OFFSET_Y = 45;
 const SPHERE_OFFSET_X = 185;
+const DEBUG_CONNECTIONS =
+  new URLSearchParams(window.location.search).get("debug") === "1";
 
 const LANGUAGE_TEXT = {
   ar: ["أنا", "أنت"],
@@ -94,6 +96,8 @@ let sphereTextParticles = [];
 let knownSphereTextSources = new Set();
 let localTextColor;
 let webglContextState = "active";
+let connectionDebugPanel;
+let lastDebugPanelUpdate = 0;
 
 function preload() {
   sculpture = loadModel("neo.obj", true);
@@ -107,6 +111,26 @@ function setup() {
     "webglcontextrestored",
     handleWebglContextRestored
   );
+  if (DEBUG_CONNECTIONS) {
+    connectionDebugPanel = document.createElement("pre");
+    connectionDebugPanel.setAttribute("aria-live", "polite");
+    Object.assign(connectionDebugPanel.style, {
+      position: "fixed",
+      left: "8px",
+      bottom: "8px",
+      zIndex: "20",
+      margin: "0",
+      padding: "7px 9px",
+      maxWidth: "calc(100vw - 34px)",
+      color: "#00ff66",
+      background: "rgba(0, 0, 0, 0.78)",
+      border: "1px solid rgba(0, 255, 102, 0.55)",
+      font: "11px/1.35 monospace",
+      whiteSpace: "pre-wrap",
+      pointerEvents: "none",
+    });
+    document.body.appendChild(connectionDebugPanel);
+  }
 
   pixelDensity(1);
   frameRate(30);
@@ -209,6 +233,7 @@ function draw() {
     "aria-label",
     `Shared webcam sculpture: ${participants.length} participants, ${Object.keys(remoteVideos).length} remote videos, ${liveMedia ? liveMedia.simplepeers.filter((peer) => peer.connected).length : 0} connected peers, socket ${liveMedia && liveMedia.socket && liveMedia.socket.connected ? "connected" : "disconnected"}, render ${webglContextState}`
   );
+  updateConnectionDebugPanel(participants.length);
 
   if (previewNetworkEnabled) {
     canvas.elt.dataset.remotePresence = String(
@@ -269,6 +294,36 @@ function draw() {
   pop();
 
   pop();
+}
+
+function updateConnectionDebugPanel(participantCount) {
+  if (!connectionDebugPanel || millis() - lastDebugPanelUpdate < 500) {
+    return;
+  }
+  lastDebugPanelUpdate = millis();
+
+  const peerStates = liveMedia
+    ? liveMedia.simplepeers.map((peer) => {
+        const state = window.younmeConnection.peers[peer.socket_id] || {};
+        return `${peer.connected ? "connected" : state.state || "connecting"}/${state.route || "unknown"}/${state.video ? "stream" : "no-stream"}/${state.frame ? "frame" : "no-frame"}`;
+      })
+    : [];
+  const videoStates = Object.values(remoteVideos).map((video) => {
+    const element = video.elt;
+    const track = element && element.srcObject &&
+      typeof element.srcObject.getVideoTracks === "function"
+      ? element.srcObject.getVideoTracks()[0]
+      : null;
+    return `${element ? element.readyState : "-"}/${element ? `${element.videoWidth}x${element.videoHeight}` : "-"}/${video.width || 0}x${video.height || 0}/${track ? track.readyState : "no-track"}`;
+  });
+
+  connectionDebugPanel.textContent = [
+    `relay ${window.younmeConnection.relay}`,
+    `signal ${window.younmeConnection.signaling}`,
+    `people ${participantCount} remote ${Object.keys(remoteVideos).length}`,
+    `peers ${peerStates.length ? peerStates.join(" | ") : "none"}`,
+    `videos ${videoStates.length ? videoStates.join(" | ") : "none"}`,
+  ].join("\n");
 }
 
 function getParticipants() {
@@ -515,6 +570,7 @@ function gotStream(stream, id) {
       videoElement.videoWidth > 0 &&
       videoElement.videoHeight > 0;
     if (hasFrame) {
+      const firstFrame = !stream._younmeFrameReady;
       stream._younmeFrameReady = true;
       stream.loadedmetadata = true;
       stream.width = videoElement.videoWidth;
@@ -522,9 +578,12 @@ function gotStream(stream, id) {
       if (window.younmeConnection.peers[id]) {
         window.younmeConnection.peers[id].frame = true;
       }
-      recordConnectionEvent("remote-frame", { peer: id });
+      if (firstFrame) {
+        recordConnectionEvent("remote-frame", { peer: id });
+      }
     }
   };
+  stream._younmeSyncFrame = markVideoReady;
 
   videoElement.muted = true;
   videoElement.defaultMuted = true;
@@ -555,7 +614,12 @@ function videoIsReady(video) {
 
   const videoElement = video.elt || video;
   if (video._younmeRemote) {
-    return Boolean(videoElement && videoElement.srcObject);
+    // Poll as part of the render loop so a missed mobile media event cannot
+    // leave the p5 wrapper at 0x0 for the lifetime of the connection.
+    if (typeof video._younmeSyncFrame === "function") {
+      video._younmeSyncFrame();
+    }
+    return Boolean(video.loadedmetadata && videoElement);
   }
   return Boolean(
     video.loadedmetadata ||

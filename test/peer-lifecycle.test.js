@@ -122,6 +122,8 @@ test("remote video stays composited and is drawable as soon as its stream arrive
   assert.equal(video.muted, true);
   assert.equal(video.playsInline, true);
   assert.equal(wrapped.loadedmetadata, true);
+  assert.equal(wrapped.width, 640);
+  assert.equal(wrapped.height, 480);
   assert.equal(video.srcObject.id, "remote-stream");
 
   video.videoWidth = 640;

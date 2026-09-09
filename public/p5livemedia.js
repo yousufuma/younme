@@ -323,6 +323,19 @@ class p5LiveMedia {
             // the sculpture on a later metadata/frame event: those events can
             // be missed when a remote video starts before handlers are added.
             videoEl.loadedmetadata = true;
+            const videoTrack = domElement.srcObject &&
+              typeof domElement.srcObject.getVideoTracks === 'function'
+              ? domElement.srcObject.getVideoTracks()[0]
+              : null;
+            const trackSettings = videoTrack &&
+              typeof videoTrack.getSettings === 'function'
+              ? videoTrack.getSettings()
+              : {};
+            // p5 uses the wrapper's width/height as its source crop. Give it a
+            // usable size immediately, even on browsers that fired metadata
+            // before this wrapper existed.
+            videoEl.width = domElement.width = trackSettings.width || 640;
+            videoEl.height = domElement.height = trackSettings.height || 480;
             const markFrameAvailable = function() {
               domElement.play().catch(() => {});
               if (domElement.videoWidth > 0 && domElement.videoHeight > 0) {
