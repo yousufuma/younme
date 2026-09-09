@@ -6,7 +6,11 @@ const indexHtml = require("./views/index");
 
 const app = express();
 const httpServer = http.createServer(app);
-const io = new Server(httpServer);
+const io = new Server(httpServer, {
+  // The public p5LiveMedia signaling service uses its Socket.IO 2.x client.
+  // Keep the local WebRTC preview compatible with that same client.
+  allowEIO3: true,
+});
 const port = process.env.PORT || 3000;
 const publicDirectory = path.join(__dirname, "public");
 

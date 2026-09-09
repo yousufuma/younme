@@ -2,7 +2,10 @@ module.exports = `<!doctype html>
 <html lang="en">
   <head>
     <script type="text/javascript" src="simplepeer.min.js"></script>
-    <script type="text/javascript" src="/socket.io/socket.io.js"></script>
+    <script
+      type="text/javascript"
+      src="https://p5livemedia.itp.io/socket.io/socket.io.js"
+    ></script>
     <script src="p5.js"></script>
     <script type="text/javascript" src="p5livemedia.js"></script>
     <link rel="stylesheet" type="text/css" href="style.css" />
